@@ -1,0 +1,75 @@
+name: CI Demo
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+      EC2_URL: ${{ secrets.EC2_URL }}
+      EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Imprimiendo algo
+        run: echo "hola mundo GA"
+      - name: Muestra el contenido del directorio
+        run: ls -la
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'corretto'
+          java-version: '21'
+      - run: java --version
+      - run: chmod +x mvnw
+      - name: Build with Maven
+        run: ./mvnw clean package --file pom.xml -DskipTests
+      - name: Listar jar
+        run: ls -la target
+      - name: Instalar docker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl
+          sudo install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/keyrings/docker.asc
+          sudo chmod a+r /etc/apt/keyrings/docker.asc
+          echo \
+          "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+          $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+          sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      - name: Docker login
+        run: echo ${{ secrets.DOCKERHUB_TOKEN }} | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+      - name: Build Docker image
+        run: docker build -t jesuscar/ci-demo .
+      - name: Push Docker image
+        run: docker push jesuscar/ci-demo
+      - name: Setup SSH for EC2
+        uses: omarhosny206/setup-ssh-for-ec2@v1.0.0
+        with:
+          EC2_SSH_PRIVATE_KEY: $EC2_SSH_PRIVATE_KEY
+          EC2_URL: $EC2_URL
+    # then you can run commands/scripts directly on the EC2 instance e.g.:
+      - name: Deploy to EC2
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKERHUB_TOKEN}}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_URL }} << 'EOF'
+            # Autenticar en Docker Hub
+            docker login -u $DOCKERHUB_USERNAME -p $DOCKERHUB_TOKEN
+
+            # Descargar la última versión de la imagen
+            docker pull jesuscar/ci-demo:latest
+
+            # Detener y eliminar el contenedor existente
+            docker stop backend-integration || true
+            docker rm backend-integration || true
+
+            # Correr el contenedor con la nueva imagen
+            docker run -d --name backend-integration --restart always -p 8080:8080 jesuscar/ci-demo:latest
+          EOF

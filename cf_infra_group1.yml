@@ -1,0 +1,188 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Resources:
+  # VPC
+  VpcDhPreProd:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: "192.168.0.0/24"
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Ambiente
+          Value: PreProd
+    DeletionPolicy: Delete
+
+  # Internet Gateway, permite la conexion a internet
+  IgwPreProd:
+    Type: "AWS::EC2::InternetGateway"
+    Properties:
+      Tags:
+        - Key: Ambiente
+          Value: IgwPreProd
+    DeletionPolicy: Delete
+
+  # Permite conectar el igw y la VPC
+  AttachGateway:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Properties:
+      VpcId: !Ref VpcDhPreProd
+      InternetGatewayId: !Ref IgwPreProd
+    DeletionPolicy: Delete
+
+  # Public Subnet
+  PublicSubnet:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VpcDhPreProd
+      CidrBlock: "192.168.0.0/26"
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: PublicSubnet
+    DeletionPolicy: Delete
+
+  # Private Subnet 1
+  PrivateSubnet1:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VpcDhPreProd
+      CidrBlock: "192.168.0.64/26"
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet1
+    DeletionPolicy: Delete
+
+  # Private Subnet 2
+  PrivateSubnet2:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VpcDhPreProd
+      CidrBlock: "192.168.0.128/26"
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet2
+    DeletionPolicy: Delete
+
+  # Private Subnet 3
+  PrivateSubnet3:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VpcDhPreProd
+      CidrBlock: "192.168.0.192/26"
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet3
+    DeletionPolicy: Delete
+
+  # Route Table for Public Subnet
+  PublicRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref VpcDhPreProd
+      Tags:
+        - Key: Name
+          Value: PublicRouteTable
+    DeletionPolicy: Delete
+
+  # Define una ruta dentro de PublicRouteTable
+  PublicRoute:
+    Type: "AWS::EC2::Route"
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref IgwPreProd
+    DeletionPolicy: Delete
+
+  # Asocia la tabla de enrutamiento con la subred
+  PublicSubnetRouteTableAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+    DeletionPolicy: Delete
+
+  # Security Group for Public EC2 Instance
+  PublicInstanceSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Allow SSH and HTTP access"
+      VpcId: !Ref VpcDhPreProd
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+    DeletionPolicy: Delete
+
+  # Security Group for Private EC2 and RDS Instance
+  PrivateInstanceSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Allow internal access only"
+      VpcId: !Ref VpcDhPreProd
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.0.0.0/16
+
+  # EC2 Instance in Public Subnet
+  PublicEC2Instance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: "t2.micro"
+      SecurityGroupIds:
+        - !Ref PublicInstanceSecurityGroup
+      SubnetId: !Ref PublicSubnet
+      ImageId: "ami-0866a3c8686eaeeba"
+    DeletionPolicy: Delete
+
+  # EC2 Instance in Private Subnet
+  PrivateEC2Instance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: "t2.micro"
+      SecurityGroupIds:
+        - !Ref PrivateInstanceSecurityGroup
+      SubnetId: !Ref PrivateSubnet1
+      ImageId: "ami-0866a3c8686eaeeba"
+    DeletionPolicy: Delete
+    DependsOn: MyRDSInstance
+
+  # RDS Subnet Group
+  MyRDSSubnetGroup:
+    Type: "AWS::RDS::DBSubnetGroup"
+    Properties:
+      DBSubnetGroupDescription: "Subnet group for RDS instance"
+      SubnetIds:
+        - !Ref PrivateSubnet2
+        - !Ref PrivateSubnet3
+      DBSubnetGroupName: "MyRDSSubnetGroup"
+    DeletionPolicy: Delete
+
+  # RDS Instance in Private Subnet
+  MyRDSInstance:
+    Type: "AWS::RDS::DBInstance"
+    Properties:
+      DBInstanceClass: "db.t4g.micro"
+      Engine: MySQL
+      EngineVersion: "8.0.39"
+      MasterUsername: "root"
+      MasterUserPassword: "password123"
+      AllocatedStorage: 20
+      DBSubnetGroupName: !Ref MyRDSSubnetGroup
+      DBName: "demo"
+      VPCSecurityGroups:
+        - !Ref PrivateInstanceSecurityGroup
+    DeletionPolicy: Delete
